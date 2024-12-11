@@ -13,113 +13,97 @@
  * */
 use WHMCS\Database\Capsule;
 
+// Hook para aceitar pedidos automaticamente após o checkout
+add_hook('AfterShoppingCartCheckout', 1, function ($vars) {
+    $serviceIDs = $vars['ServiceIDs'] ?? [];
 
-
-
-add_hook('AfterShoppingCartCheckout', 1, function($vars) {
-	$ServiceIDs = $vars['ServiceIDs'];
-	foreach($ServiceIDs as $ServiceID)
-	{
-		 $GData = Capsule::table('tblhosting')
+    foreach ($serviceIDs as $serviceID) {
+        $gData = Capsule::table('tblhosting')
             ->join('tblproducts', 'tblhosting.packageid', '=', 'tblproducts.id')
             ->join('tblorders', 'tblhosting.orderid', '=', 'tblorders.id')
-            ->where('tblhosting.id',$ServiceID)
-            ->select('tblproducts.autosetup as productAutosetup','tblorders.id as orderid','tblhosting.firstpaymentamount as productAmount','tblhosting.id as serviceId')
-            ->get();
+            ->where('tblhosting.id', $serviceID)
+            ->select('tblproducts.autosetup as productAutosetup', 'tblorders.id as orderid', 'tblhosting.firstpaymentamount as productAmount', 'tblhosting.id as serviceId')
+            ->first();
 
-            $isinvoicedata = Capsule::table('tblorders')->where('id',$GData[0]->orderid)->get();
-            if($isinvoicedata)
-            {
-				$isinvoice = $isinvoicedata[0]->invoiceid;
-				if($isinvoice)
-					{
-						if($GData[0]->productAutosetup == "payment")
-						{
-							$InvoiceStatus = Capsule::table('tblorders')
-							->join('tblinvoices', 'tblorders.invoiceid', '=', 'tblinvoices.id')
-							->where('tblorders.id',$GData[0]->orderid)
-							->select('tblinvoices.status')
-							->get();
-							if($GData[0]->productAmount != "0.00")
-							{
-								if($InvoiceStatus[0]->status == 'Paid')
-									{
-									MakeAcceptOrder($GData[0]->orderid,$GData[0]->serviceId);
-									}
-							}
+        if (!$gData) {
+            logActivity("Serviço não encontrado para o ID: $serviceID");
+            continue;
+        }
 
-						}
-					}
-				else
-				{
-					if($GData[0]->productAutosetup == "order")
-					{
-						MakeAcceptOrder($GData[0]->orderid,$GData[0]->serviceId);
-					}
+        $invoiceData = Capsule::table('tblorders')->where('id', $gData->orderid)->first();
 
-					if($GData[0]->productAutosetup == "payment")
-					{
-						$InvoiceStatus = Capsule::table('tblorders')
-						->join('tblinvoices', 'tblorders.invoiceid', '=', 'tblinvoices.id')
-						->where('tblorders.id',$GData[0]->orderid)
-						->select('tblinvoices.status')
-						->get();
-						if($GData[0]->productAmount != "0.00")
-						{
-							if($InvoiceStatus[0]->status == 'Paid')
-								{
-								MakeAcceptOrder($GData[0]->orderid,$GData[0]->serviceId);
-								}
-						}
+        if (!$invoiceData) {
+            logActivity("Pedido não encontrado para o ID: $gData->orderid");
+            continue;
+        }
 
-					}
-				}
+        $invoiceID = $invoiceData->invoiceid ?? null;
+
+        if ($invoiceID && $gData->productAutosetup === 'payment') {
+            $invoiceStatus = Capsule::table('tblinvoices')->where('id', $invoiceID)->value('status');
+            if ($invoiceStatus === 'Paid' && $gData->productAmount != "0.00") {
+                MakeAcceptOrder($gData->orderid, $gData->serviceId);
             }
-          
-
-            
-	}
-	
+        } elseif ($gData->productAutosetup === 'order') {
+            MakeAcceptOrder($gData->orderid, $gData->serviceId);
+        }
+    }
 });
 
+// Hook para aceitar pedidos automaticamente após pagamento da fatura
+add_hook('InvoicePaid', 1, function ($vars) {
+    $invoiceID = $vars['invoiceid'];
 
-add_hook('InvoicePaid', 1, function($vars) {
-	$InvoiceID = $vars['invoiceid'];
-	$GData = Capsule::table('tblorders')
-	        ->join('tblhosting', 'tblorders.id', '=', 'tblhosting.orderid')
-	        ->join('tblproducts', 'tblhosting.packageid', '=', 'tblproducts.id')
-	        ->where('tblorders.invoiceid',$InvoiceID)
-	        ->select('tblproducts.autosetup as productAutosetup','tblorders.id as orderid','tblhosting.firstpaymentamount as productAmount','tblhosting.id as serviceId')
-	        ->get();
-    
-			if($GData[0]->productAutosetup == "order")
-            {
-            	MakeAcceptOrder($GData[0]->orderid,$GData[0]->serviceId);
-            }
+    $gData = Capsule::table('tblorders')
+        ->join('tblhosting', 'tblorders.id', '=', 'tblhosting.orderid')
+        ->join('tblproducts', 'tblhosting.packageid', '=', 'tblproducts.id')
+        ->where('tblorders.invoiceid', $invoiceID)
+        ->select('tblproducts.autosetup as productAutosetup', 'tblorders.id as orderid', 'tblhosting.firstpaymentamount as productAmount', 'tblhosting.id as serviceId')
+        ->first();
 
-            if($GData[0]->productAutosetup == "payment")
-            {
-	            MakeAcceptOrder($GData[0]->orderid,$GData[0]->serviceId);
-            }        
-    // Perform hook code here...
+    if (!$gData) {
+        logActivity("Nenhum pedido encontrado para a fatura ID: $invoiceID");
+        return;
+    }
+
+    if ($gData->productAutosetup === 'order' || ($gData->productAutosetup === 'payment' && $gData->productAmount != "0.00")) {
+        MakeAcceptOrder($gData->orderid, $gData->serviceId);
+    }
 });
 
-function MakeAcceptOrder($OrderID = "",$ServiceID = "")
+/**
+ * Função para aceitar pedidos automaticamente
+ */
+function MakeAcceptOrder($orderID = "", $serviceID = "")
 {
-	$command = 'AcceptOrder';
-	$postData = array(
-	    'orderid' => $OrderID,
-	    'autosetup' => '1',
-	    'sendemail' => '1',
-	);
-	 $admin = Capsule::table('tbladmins')
-	            ->where('roleid', '=', 1)
-	            ->get();
-	    $adminUsername = $admin[0]->username;
+    if (empty($orderID) || empty($serviceID)) {
+        logActivity("Dados insuficientes para aceitar pedido: OrderID=$orderID, ServiceID=$serviceID");
+        return;
+    }
 
-	$results = localAPI($command, $postData, $adminUsername);
-	
+    $command = 'AcceptOrder';
+    $postData = [
+        'orderid' => $orderID,
+        'autosetup' => '1',
+        'sendemail' => '1',
+    ];
+
+    $admin = Capsule::table('tbladmins')->where('roleid', '=', 1)->first();
+
+    if (!$admin) {
+        logActivity("Nenhum administrador encontrado para executar o comando AcceptOrder.");
+        return;
+    }
+
+    $adminUsername = $admin->username;
+
+    $results = localAPI($command, $postData, $adminUsername);
+
+    if ($results['result'] !== 'success') {
+        logActivity("Erro ao aceitar pedido automaticamente: " . json_encode($results));
+    } else {
+        logActivity("Pedido aceito automaticamente: OrderID=$orderID, ServiceID=$serviceID");
+    }
 }
-
 
 ?>
