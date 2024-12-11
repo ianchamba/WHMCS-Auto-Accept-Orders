@@ -11,3 +11,5 @@ Upload it to the includes/hooks directory of your whmcs and you are done
 
 
 Done:) !
+
+Updated by Me for WHMCS 8.11.2 @ianchamba
