@@ -7,8 +7,8 @@ currently being supported with security updates.
 
 | wHMCS Version | Supported          |
 | ------------- | ------------------ |
-| 8.1.x         | :white_check_mark: |
-| < 7.0         | :x:                |
+| 8.11.x         | :white_check_mark: |
+| < 7.4         | :x:                |
 
 ## Reporting a Vulnerability
 
